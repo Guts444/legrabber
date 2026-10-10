@@ -16,8 +16,8 @@
 
     Examples
       legrabber                                        # prompts, stays open
-      legrabber https://x.com/user/status/123
-      legrabber https://youtu.be/dQw4w9WgXcQ           # shows the quality menu
+      legrabber <video-url>
+      legrabber <video-url>                           # shows the quality menu
       legrabber <url> -Quality 1080 -Yes               # no menu
       legrabber <url> -Audio -AudioFormat mp3          # rip the audio
       legrabber <url> -List                            # show formats, no download

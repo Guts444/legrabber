@@ -38,7 +38,7 @@ jobs:
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $PWD 'dist\legrabber.zip'))
           try {
-            $expected = @('README.md', 'install.cmd', 'legrabber.cmd', 'legrabber.ps1') | Sort-Object
+            $expected = @('LICENSE', 'README.md', 'install.cmd', 'legrabber.cmd', 'legrabber.ps1') | Sort-Object
             $actual = @($zip.Entries.FullName | Sort-Object)
             if (($actual -join ',') -cne ($expected -join ',')) {
               throw 'Release archive contains unexpected files.'

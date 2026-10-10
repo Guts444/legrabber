@@ -17,7 +17,7 @@ It uses [ffmpeg](https://ffmpeg.org/) for merging, conversion and tagging.
 
 ## Install
 
-1. Download **`legrabber-v1.0.0.zip`** from the
+1. Download **`legrabber-v1.0.1.zip`** from the
    [latest release](https://github.com/Guts444/legrabber/releases/latest).
    The release ZIP contains everything needed to start; GitHub's automatic
    source archives are intended for development.
@@ -44,7 +44,7 @@ release so the executable and checksum list come from the same version; the
 ffmpeg archive is checked against its published checksum too.
 
 To upgrade legrabber, close it and replace `legrabber.ps1`, `legrabber.cmd`,
-`install.cmd` and `README.md` in your existing folder with the new release's
+`install.cmd`, `README.md` and `LICENSE` in your existing folder with the new release's
 files. Keep `bin\` and `downloads\`. `legrabber -Update` updates **yt-dlp**,
 not legrabber itself.
 
@@ -52,18 +52,21 @@ not legrabber itself.
 
 ```powershell
 legrabber                                      # stay open for links and searches
-legrabber "artist song title"                   # choose from up to 10 YouTube results
-legrabber "https://youtu.be/dQw4w9WgXcQ"         # choose video quality or audio
-legrabber "https://youtu.be/dQw4w9WgXcQ" -Audio  # original audio, no re-encoding
-legrabber "artist song title" -Audio -Yes -Pick 1
+legrabber "your own video title"                # choose from up to 10 YouTube results
+legrabber "<VIDEO_URL>"                         # choose video quality or audio
+legrabber "<VIDEO_URL>" -Audio                  # original audio, no re-encoding
+legrabber "your own video title" -Audio -Yes -Pick 1
 ```
+
+Examples use placeholders, not links to media. Replace `<VIDEO_URL>` and
+`<TRACK_URL>` with addresses for content you are permitted to download.
 
 ## Use
 
 Type `legrabber` — it stays open and takes links or search phrases:
 
 ```
-  Paste a video address or search YouTube (q to quit): https://x.com/user/status/1234567890
+  Paste a video address or search YouTube (q to quit): <VIDEO_URL>
   ...
   Paste a video address or search YouTube (q to quit): q
 ```
@@ -72,7 +75,7 @@ Or double-click `legrabber.cmd`, or pass the link straight in. Quote URLs,
 especially those containing `&`, so the shell passes the complete address:
 
 ```powershell
-legrabber "https://youtu.be/dQw4w9WgXcQ"
+legrabber "<VIDEO_URL>"
 ```
 
 ### Search YouTube
@@ -85,22 +88,22 @@ menu. `q` cancels the search and returns to the main prompt.
 You can also search from the command line:
 
 ```powershell
-legrabber "50 cent many men"
-legrabber "50 cent many men" -Audio
+legrabber "your own video title"
+legrabber "your own video title" -Audio
 ```
 
 Explicit links and bare domains still download directly. Use `-Search` to
-force search if your phrase looks like a domain, such as `Mr.Brightside`:
+force search if your phrase looks like a domain, such as `my.video`:
 
 ```powershell
-legrabber "Mr.Brightside" -Search
+legrabber "my.video" -Search
 ```
 
 `-Pick 2` selects result 2 without the results prompt. With `-Yes`, a search
 requires `-Pick` so it never silently downloads an unintended first match:
 
 ```powershell
-legrabber "50 cent many men" -Audio -Yes -Pick 1
+legrabber "your own video title" -Audio -Yes -Pick 1
 ```
 
 Search reads result metadata only; it downloads only the selected video.
@@ -112,7 +115,7 @@ options work as they do with a pasted link. No API key or extra dependency.
 Paste a full Spotify track link just like any other address:
 
 ```powershell
-legrabber "https://open.spotify.com/track/0j2T0R9dR9qdJYsB7ciXhf"
+legrabber "<TRACK_URL>"
 ```
 
 legrabber reads the public song title and artists, searches YouTube, and shows
@@ -120,7 +123,7 @@ up to ten matches. Choose the version you want, then use the normal video/audio
 menu. The file and its tags come from the chosen YouTube video, and it lands
 in `downloads\YouTube\` by default. Spotify audio is not downloaded.
 
-No Spotify account or API key is needed. Localized `open.spotify.com/intl-.../track/`
+No Spotify account or API key is needed. Full track links, localized track
 links, embed track links and `spotify:track:<id>` desktop URIs work too. Albums,
 playlists and shortened share links are not supported; use a full track link.
 If Spotify cannot provide the metadata, search the song title and artist instead.
@@ -130,14 +133,14 @@ Normal options carry through to the selected YouTube result. For example,
 formats. Unattended use requires an explicit match index:
 
 ```powershell
-legrabber "https://open.spotify.com/track/0j2T0R9dR9qdJYsB7ciXhf" -Audio -Yes -Pick 2
+legrabber "<TRACK_URL>" -Audio -Yes -Pick 2
 ```
 
 ### YouTube asks what you want first
 
 ```
-  Me at the zoo
-  jawed  -  0:19
+  Example recording
+  Example creator  -  0:19
 
   Video or audio?  1 = video, 2 = audio  (q to quit): 2
 
@@ -162,8 +165,8 @@ are asked once, then every item downloads in order, with a bar for the current
 item and a bar for your place in the playlist:
 
 ```
-  Playlist: Uploads from Blender Studio        item 7 of 62
-  legrabber  08 - Painterly Shadows.m4a   -   2.4MiB/s   ETA 00:03
+  Playlist: My recordings                     item 7 of 62
+  legrabber  08 - Example recording.m4a   -   2.4MiB/s   ETA 00:03
 ```
 
 They land in `.\downloads\YouTube\<playlist name>\`, numbered in playlist
@@ -208,24 +211,18 @@ video unless you pass `-Audio` or `-Quality`. It still fetches yt-dlp if needed.
 remaining items. Files already saved remain available, but the run exits with
 a nonzero code if any item fails. Errors can involve unavailable items, login
 requirements, network failures, or post-processing; check the printed message.
-`-Browser chrome` may help when your browser account can access the item.
+Account access does not by itself grant permission to download an item.
 
-**A site asks for login.** Browser cookies can help for posts your account can
-access. Close the browser if yt-dlp cannot read its cookie database, then run:
+**A site asks for login.** `-Browser` uses your own browser session for content
+your account can access and you are permitted to download:
 
 ```powershell
-legrabber "https://example.com/video" -Browser chrome
+legrabber "<VIDEO_URL>" -Browser chrome
 ```
 
-**`HTTP Error 403: Forbidden` on YouTube.** The script retries once because a
-refreshed media token may help. If it still fails, try `-Update`, a different
-format, or browser cookies. These do not guarantee access to every video.
-
-A different `-Client` exposes different formats and can cause "Requested
-format is not available". Use it only when you know which client you need.
-
-For YouTube's "Sign in to confirm you're not a bot" message, cookies from a
-signed-in browser may help; YouTube can still restrict the request.
+**The source denies access or restricts downloads.** Respect the restriction.
+Use the source's authorized download or export option where available.
+legrabber does not provide DRM decryption or grant access or download rights.
 
 `-Update` is worth trying whenever a site starts failing; yt-dlp extractors
 change as sites change.
@@ -251,7 +248,7 @@ the same checks on Windows PowerShell 5.1 and PowerShell 7.
 `pack.cmd` rebuilds `dist\legrabber.zip` — that's the file to hand out. It's
 small because yt-dlp and ffmpeg are fetched on the recipient's machine rather
 than shipped. The zip contains only the script, launcher, setup launcher,
-and README; it excludes dependencies and downloaded media.
+README and MIT license; it excludes dependencies and downloaded media.
 
 Whoever receives it unzips it, runs `install.cmd`, opens a new terminal and
 types `legrabber`. No admin rights are needed. Setup adds this directory to
@@ -279,6 +276,7 @@ the folder twice.)
 legrabber.ps1    the script
 legrabber.cmd    launcher (double-click or call from any shell)
 install.cmd      one-time setup: PATH + dependencies
+LICENSE          MIT license for legrabber
 pack.cmd         rebuild dist\legrabber.zip for sharing (developer checkout)
 bin\             yt-dlp.exe and ffmpeg\, fetched on first run
 downloads\       your videos
@@ -288,4 +286,20 @@ downloads\       your videos
 
 Quality picks prefer H.264/MP4 for broad player and editor compatibility where
 those streams are available. Higher resolutions may fall back to VP9/AV1 in a
-`.webm` container. Respect copyright and each site's terms when downloading.
+`.webm` container.
+
+## Permitted use and license
+
+Use legrabber for content you own, content in the public domain, or content
+you have permission to download. Follow applicable law, the content's license
+and the source's terms. Access to a page or account does not establish
+download permission.
+
+legrabber is licensed under the [MIT License](https://github.com/Guts444/legrabber/blob/main/LICENSE).
+That license covers legrabber's code and documentation; it does not grant
+rights to downloaded content. yt-dlp, ffmpeg and other third-party components
+retain their own licenses.
+
+Service and tool names identify compatibility and dependencies only.
+legrabber is an independent project with no affiliation or endorsement from
+the services mentioned here.

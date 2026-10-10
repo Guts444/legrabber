@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.1 - 2026-10-10
+
+- License legrabber's code and documentation under MIT.
+- Include the license in the release ZIP.
+- Replace real media links, song titles and creator names in the README
+  with neutral placeholders.
+- Clarify permitted use, independent service references and the distinction
+  between the software license and rights to downloaded content.
+
 ## v1.0.0 - 2026-10-10
 
 First public release.
