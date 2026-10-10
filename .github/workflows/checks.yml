@@ -10,21 +10,28 @@ permissions:
 
 jobs:
   regression:
-    name: Regression (${{ matrix.shell }})
+    name: Regression (${{ matrix.engine }})
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        shell: [powershell, pwsh]
+        engine: [powershell, pwsh]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Run regression checks
-        shell: ${{ matrix.shell }}
+      - name: Run Windows PowerShell 5.1 regression checks
+        if: matrix.engine == 'powershell'
+        shell: powershell
+        run: |
+          & .\tests\regression.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run PowerShell 7 regression checks
+        if: matrix.engine == 'pwsh'
+        shell: pwsh
         run: |
           & .\tests\regression.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build and check release archive
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         run: |
           & .\pack.cmd -Yes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
