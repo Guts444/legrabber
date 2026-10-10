@@ -6,8 +6,8 @@ playlist folders and dependency setup around [yt-dlp](https://github.com/yt-dlp/
 It uses [ffmpeg](https://ffmpeg.org/) for merging, conversion and tagging.
 
 [Download the latest release](https://github.com/Guts444/legrabber/releases/latest)
-\u00b7 [Changelog](https://github.com/Guts444/legrabber/blob/main/CHANGELOG.md)
-\u00b7 [Report an issue](https://github.com/Guts444/legrabber/issues)
+| [Changelog](https://github.com/Guts444/legrabber/blob/main/CHANGELOG.md)
+| [Report an issue](https://github.com/Guts444/legrabber/issues)
 
 - **X / Twitter** — best quality available
 - **Instagram Reels** — best quality available
