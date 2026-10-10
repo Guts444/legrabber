@@ -1,0 +1,16 @@
+# Local dependencies, downloaded media and generated release assets
+/bin/
+/downloads/
+/dist/
+
+# Private live-test artifacts and machine-specific verification notes
+/.verification/
+/VERIFICATION.md
+
+# Editor / OS files
+/.vscode/
+/.idea/
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp

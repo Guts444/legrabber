@@ -1,0 +1,48 @@
+name: Windows checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Regression (${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run regression checks
+        shell: ${{ matrix.shell }}
+        run: |
+          & .\tests\regression.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and check release archive
+        shell: ${{ matrix.shell }}
+        run: |
+          & .\pack.cmd -Yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $PWD 'dist\legrabber.zip'))
+          try {
+            $expected = @('README.md', 'install.cmd', 'legrabber.cmd', 'legrabber.ps1') | Sort-Object
+            $actual = @($zip.Entries.FullName | Sort-Object)
+            if (($actual -join ',') -cne ($expected -join ',')) {
+              throw 'Release archive contains unexpected files.'
+            }
+            foreach ($entry in $zip.Entries) {
+              $stream = $entry.Open()
+              $sha = [Security.Cryptography.SHA256]::Create()
+              try {
+                $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '')
+                $sourceHash = (Get-FileHash -LiteralPath $entry.FullName -Algorithm SHA256).Hash
+                if ($hash -ne $sourceHash) { throw ('Archive differs from source: ' + $entry.FullName) }
+              } finally { $stream.Dispose(); $sha.Dispose() }
+            }
+          } finally { $zip.Dispose() }
