@@ -21,6 +21,7 @@ $Script:Failures = @()
 $Script:Passed = 0
 $Script:Messages = @()
 $Script:CapturedArgs = @()
+$Script:TempDirs = @()
 function Say { param([string]$Text, [string]$Color) $Script:Messages += $Text }
 function SayWarn { param([string]$Text) $Script:Messages += $Text }
 function SayErr { param([string]$Text) $Script:Messages += $Text }
@@ -38,10 +39,26 @@ function Run-Test {
     $AudioFormat = 'original'; $Browser = $null; $Client = $null
     $Playlist = $false; $Subs = $false; $List = $false; $Yes = $false
     $Search = $false; $Pick = 0
+    # Extras added after v1.0.1. Reset here or a previous test leaks them in.
+    $Cookies = $null; $SubLangs = $null; $Batch = $null; $Archive = $false
+    $Chapters = $false; $Tags = $false; $Thumb = $false; $KeepMtime = $false
+    $Retries = 10; $FragmentRetries = 3; $LimitRate = $null
+    $Sleep = 0; $SleepRequests = 0; $SocketTimeout = 20
     try { & $Action; $Script:Passed++; Write-Host "PASS $Name" -ForegroundColor Green }
-    catch { $Script:Failures += "$Name : $($_.Exception.Message)"; Write-Host "FAIL $Name : $($_.Exception.Message)" -ForegroundColor Red }
+    catch { $Script:Failures += "$Name : $($_.Exception.Message)"; Write-Host "FAIL $Name : $($_.Exception.Message) @ $($_.InvocationInfo.ScriptLineNumber) :: $($_.InvocationInfo.Line.Trim())" -ForegroundColor Red }
 }
 function Arg-Value { param([string]$Name) $index = [array]::IndexOf($Script:CapturedArgs, $Name); if ($index -lt 0) { return $null }; return $Script:CapturedArgs[$index + 1] }
+# Value that follows a flag in an argument list the test captured itself.
+function Pair-Value { param([string[]]$List, [string]$Name) $index = [array]::IndexOf($List, $Name); if ($index -lt 0) { return $null }; return $List[$index + 1] }
+# Temp files for the new checks stay independent of the suite's shared temp root,
+# and are removed by the outer finally block.
+function New-TestDir {
+    param([string]$Tag)
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('legrabber-' + $Tag + '-' + [guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $dir
+    $Script:TempDirs += $dir
+    return $dir
+}
 
 try {
     Run-Test 'Spotify track IDs accept canonical localized embed and desktop links' {
@@ -537,6 +554,170 @@ try {
         Assert (($rows | Where-Object {$_.Height -eq 720}).Size -eq 110) 'Separate audio was omitted from video-only estimate'
         Assert (($rows | Where-Object {$_.Height -eq 480}).Size -eq 100) 'Combined stream counted its audio twice'
     }
+    Run-Test 'Network resilience arguments are explicit and survive the base argument list' {
+        $base = @(Get-NetworkArgs)
+        Assert ((Pair-Value $base '--retries') -eq '10') 'Default retry count missing or wrong'
+        Assert ((Pair-Value $base '--fragment-retries') -eq '3') 'Default fragment retry count missing'
+        Assert ((Pair-Value $base '--socket-timeout') -eq '20') 'Default socket timeout missing'
+        Assert ($base -contains '--no-mtime') 'Default did not keep the local timestamp'
+        Assert (-not ($base -contains '--limit-rate')) 'Default capped the download rate'
+
+        $Retries = 25; $FragmentRetries = 0; $SocketTimeout = 45; $LimitRate = '2M'; $Sleep = 5; $SleepRequests = 2
+        $base = @(Get-NetworkArgs)
+        Assert ((Pair-Value $base '--retries') -eq '25') 'Configured retry count lost'
+        Assert (-not ($base -contains '--fragment-retries')) 'Zero fragment retries still passed a flag'
+        Assert ((Pair-Value $base '--limit-rate') -eq '2M') 'Rate limit lost'
+        Assert ((Pair-Value $base '--sleep-interval') -eq '5') 'Download interval lost'
+        Assert ((Pair-Value $base '--sleep-requests') -eq '2') 'Request interval lost'
+
+        $KeepMtime = $true
+        Assert (-not (@(Get-NetworkArgs) -contains '--no-mtime')) 'KeepMtime still forced the local timestamp'
+    }
+    Run-Test 'Cookie files and subtitle languages reach the downloader' {
+        $cookiesFile = Join-Path (New-TestDir 'cookies') 'cookies.txt'
+        $Cookies = $cookiesFile
+        $Browser = 'chrome'; $Subs = $true; $SubLangs = 'pt.*,en.*'
+        $base = @(Get-BaseArgs)
+        Assert ((Pair-Value $base '--cookies') -eq $cookiesFile) 'Cookies file not passed to the downloader'
+        Assert ((Pair-Value $base '--cookies-from-browser') -eq 'chrome') 'Browser cookies were dropped'
+        Assert ($base -contains '--no-mtime') 'Downloader command lost the network arguments'
+        $embed = @(Get-EmbedArgs -Video)
+        Assert ((Pair-Value $embed '--sub-langs') -eq 'pt.*,en.*') 'Subtitle language selection lost'
+        Assert ($embed -contains '--write-subs' -and $embed -contains '--embed-subs') 'Subtitle embedding incomplete'
+        Assert (-not ($embed -contains '--embed-chapters')) 'Chapters embedded without being asked for'
+        Assert (-not ($embed -contains '--embed-thumbnail')) 'Cover art embedded without being asked for'
+    }
+    Run-Test 'Video extras stay opt-in and out of the audio path' {
+        $Subs = $true
+        $embed = @(Get-EmbedArgs -Video)
+        Assert ((Pair-Value $embed '--sub-langs') -eq 'en.*,en') 'Default subtitle languages changed'
+        Assert (-not ($embed -contains '--embed-metadata')) 'Video metadata embedded without being asked for'
+        $Chapters = $true; $Tags = $true
+        $embed = @(Get-EmbedArgs -Video)
+        Assert ($embed -contains '--embed-chapters') 'Chapters flag lost'
+        Assert ($embed -contains '--embed-metadata') 'Metadata flag lost'
+        $audio = @(Get-EmbedArgs)
+        Assert (-not ($audio -contains '--embed-chapters')) 'Chapters leaked into the audio path'
+        Assert (-not ($audio -contains '--embed-metadata')) 'Audio embed args duplicated existing metadata handling'
+    }
+    Run-Test 'Archive state reaches the download command' {
+        $Archive = $true
+        $info = [pscustomobject]@{
+            id = 'fixture'; title = 'Fixture'; duration = 60
+            formats = @([pscustomobject]@{format_id='18';ext='mp4';height=360;fps=30;vcodec='avc1';acodec='mp4a';filesize=1000})
+        }
+        function Get-Ff { return 'C:\ffmpeg.exe' }
+        function Get-Info { param($CleanUrl, [string[]]$BaseArgs, [switch]$Playlist, [switch]$FlatPlaylist) return $info }
+        function Invoke-Download { param([string[]]$ArgumentList, [string]$Platform) $Script:CapturedArgs = $ArgumentList; $Script:DownloadOk = $true }
+        $Quality = '360'
+        Assert (Invoke-One 'https://www.youtube.com/watch?v=abcdefghijk') 'Archived download run failed'
+        Assert ($Script:CapturedArgs -contains '--download-archive') 'Archive flag not passed to the downloader'
+        Assert ($Script:CapturedArgs -contains '--no-mtime') 'Network arguments missing from the download command'
+    }
+    Run-Test 'Archive is opt in and bare -Archive needs no value' {
+        # What the prologue sets, so 'legrabber <url> -Archive' binds with no value.
+        $PSDefaultParameterValues['*:Archive'] = $true
+        $Archive = $true
+        $info = [pscustomobject]@{
+            id = 'fixture'; title = 'Fixture'; duration = 60
+            formats = @([pscustomobject]@{format_id='18';ext='mp4';height=360;fps=30;vcodec='avc1';acodec='mp4a';filesize=1000})
+        }
+        function Get-Ff { return 'C:\ffmpeg.exe' }
+        function Get-Info { param($CleanUrl, [string[]]$BaseArgs, [switch]$Playlist, [switch]$FlatPlaylist) return $info }
+        function Invoke-Download { param([string[]]$ArgumentList, [string]$Platform) $Script:CapturedArgs = $ArgumentList; $Script:DownloadOk = $true }
+        $Quality = '360'
+        Assert (Invoke-One 'https://www.youtube.com/watch?v=abcdefghijk') 'Bare -Archive run failed'
+        Assert ($Script:CapturedArgs -contains '--download-archive') 'Bare -Archive was not honoured'
+        $PSDefaultParameterValues.Remove('*:Archive')
+    }
+    Run-Test 'Archive stays off unless it is asked for' {
+        $info = [pscustomobject]@{
+            id = 'fixture'; title = 'Fixture'; duration = 60
+            formats = @([pscustomobject]@{format_id='18';ext='mp4';height=360;fps=30;vcodec='avc1';acodec='mp4a';filesize=1000})
+        }
+        function Get-Ff { return 'C:\ffmpeg.exe' }
+        function Get-Info { param($CleanUrl, [string[]]$BaseArgs, [switch]$Playlist, [switch]$FlatPlaylist) return $info }
+        function Invoke-Download { param([string[]]$ArgumentList, [string]$Platform) $Script:CapturedArgs = $ArgumentList; $Script:DownloadOk = $true }
+        $Quality = '360'
+        Assert (Invoke-One 'https://www.youtube.com/watch?v=abcdefghijk') 'Default download run failed'
+        Assert (-not ($Script:CapturedArgs -contains '--download-archive')) 'Archive was enabled without being asked for'
+    }
+    Run-Test 'Archive identities come from the URL and never guess' {
+        Assert ((Get-ArchiveId -CleanUrl 'https://www.youtube.com/watch?v=jNQXAC9IVRw' -Platform youtube) -eq 'jNQXAC9IVRw') 'YouTube watch id lost'
+        Assert ((Get-ArchiveId -CleanUrl 'https://youtu.be/-abcdefghij' -Platform youtube) -eq '-abcdefghij') 'Short-link id lost'
+        Assert ((Get-ArchiveId -CleanUrl 'https://www.youtube.com/playlist?list=PL123' -Platform youtube) -eq $null) 'Playlist produced an id'
+        Assert ((Get-ArchiveId -CleanUrl 'https://x.com/user/status/2108405185542270976' -Platform x) -eq '2108405185542270976') 'X status id lost'
+        Assert ((Get-ArchiveId -CleanUrl 'https://www.instagram.com/reel/Cx1y2z3A/' -Platform instagram) -eq 'Cx1y2z3A') 'Instagram reel id lost'
+        Assert ((Get-ArchiveId -CleanUrl 'https://example.invalid/whatever' -Platform other) -eq $null) 'Unknown site produced an id'
+    }
+    Run-Test 'Archived items are skipped before any network work' {
+        $dir = New-TestDir 'archive-skip'
+        $Script:ArchiveFile = Join-Path $dir 'archive.txt'
+        [IO.File]::WriteAllText($Script:ArchiveFile, "youtube jNQXAC9IVRw`r`n", (New-Object Text.UTF8Encoding($false)))
+        $Archive = $true
+        $info = [pscustomobject]@{ id='fixture'; title='Fixture'; duration=60; formats=@([pscustomobject]@{format_id='18';ext='mp4';height=360;fps=30;vcodec='avc1';acodec='mp4a';filesize=1000}) }
+        function Get-Ff { return 'C:\ffmpeg.exe' }
+        function Get-Info { param($CleanUrl, [string[]]$BaseArgs, [switch]$Playlist, [switch]$FlatPlaylist) throw 'Archived item requested metadata' }
+        function Invoke-Download { param([string[]]$ArgumentList, [string]$Platform) throw 'Archived item was downloaded again' }
+        $Quality = '360'
+        Assert (Invoke-One 'https://www.youtube.com/watch?v=jNQXAC9IVRw') 'Archived item reported failure instead of a skip'
+        Assert $Script:DownloadOk 'Archived skip was not counted as success'
+        Assert-Contains $Script:Messages 'Already grabbed'
+    }
+    Run-Test 'Unarchived and archive-off runs still download' {
+        $dir = New-TestDir 'archive-miss'
+        $Script:ArchiveFile = Join-Path $dir 'archive.txt'
+        [IO.File]::WriteAllText($Script:ArchiveFile, "youtube -abcdefghij`r`n", (New-Object Text.UTF8Encoding($false)))
+        $info = [pscustomobject]@{ id='fixture'; title='Fixture'; duration=60; formats=@([pscustomobject]@{format_id='18';ext='mp4';height=360;fps=30;vcodec='avc1';acodec='mp4a';filesize=1000}) }
+        function Get-Ff { return 'C:\ffmpeg.exe' }
+        function Get-Info { param($CleanUrl, [string[]]$BaseArgs, [switch]$Playlist, [switch]$FlatPlaylist) return $info }
+        function Invoke-Download { param([string[]]$ArgumentList, [string]$Platform) $Script:CapturedArgs = $ArgumentList; $Script:DownloadOk = $true }
+        $Quality = '360'
+        Assert (Invoke-One 'https://www.youtube.com/watch?v=jNQXAC9IVRw') 'Unarchived item failed'
+        Assert ($Script:CapturedArgs.Count -gt 0) 'Unarchived item did not download'
+        $Script:CapturedArgs = @()
+        $Script:ArchiveFile = Join-Path $dir 'missing.txt'
+        Assert (Invoke-One 'https://www.youtube.com/watch?v=jNQXAC9IVRw') 'Missing archive file broke the download'
+        Assert ($Script:CapturedArgs.Count -gt 0) 'Missing archive file skipped the download'
+    }
+    Run-Test 'Batch input keeps order, strips trim and skips blanks and comments' {
+        $file = Join-Path (New-TestDir 'batch-input') 'links.txt'
+        [IO.File]::WriteAllText($file, "# a comment`r`n`r`n  https://x.com/user/status/123  `r`n50 cent many men`r`n   `r`nhttps://youtu.be/-abcdefghij`r`n", (New-Object Text.UTF8Encoding($false)))
+        $targets = @(Read-BatchTargets -LiteralPath $file)
+        Assert ($targets.Count -eq 3) "Expected 3 targets, got $($targets.Count)"
+        Assert ($targets[0] -eq 'https://x.com/user/status/123') 'Surrounding whitespace was kept'
+        Assert ($targets[1] -eq '50 cent many men') 'Search phrase order changed'
+        Assert ($targets[2] -eq 'https://youtu.be/-abcdefghij') 'Leading-dash link changed'
+    }
+    Run-Test 'Batch refuses a conflicting or unselectable run' {
+        $dir = New-TestDir 'batch-refuse'
+        $file = Join-Path $dir 'links.txt'
+        [IO.File]::WriteAllText($file, "https://youtu.be/-abcdefghij`r`n", (New-Object Text.UTF8Encoding($false)))
+        $List = $true
+        Assert (-not (Invoke-Batch -LiteralPath $file)) 'Batch combined with -List'
+        Assert-Contains $Script:Messages 'cannot be combined with -Batch'
+        $List = $false; $Url = 'https://youtu.be/-abcdefghij'
+        Assert (-not (Invoke-Batch -LiteralPath $file)) 'Batch combined with a URL'
+        $Url = $null; $Search = $true
+        Assert (-not (Invoke-Batch -LiteralPath $file)) 'Batch search ran without -Pick'
+        Assert-Contains $Script:Messages 'needs -Pick'
+        $Search = $false
+        Assert (-not (Invoke-Batch -LiteralPath (Join-Path $dir 'missing.txt'))) 'Missing batch file accepted'
+        Assert-Contains $Script:Messages 'Could not read the batch file'
+    }
+    Run-Test 'Batch visits every item and preserves order with a failure' {
+        $file = Join-Path (New-TestDir 'batch-order') 'mixed.txt'
+        # First item is an unsupported scheme, so it fails without any network.
+        [IO.File]::WriteAllText($file, "ftp://example.invalid/video`r`nhttps://x.com/user/status/123`r`n", (New-Object Text.UTF8Encoding($false)))
+        # A real bin folder, so the portable-ffmpeg probe behaves as it does on a
+        # machine that has never installed ffmpeg.
+        $Script:Bin = New-TestDir 'batch-bin'
+        $env:LEGRABBER_TEST_MODE = 'success'
+        Assert (-not (Invoke-Batch -LiteralPath $file)) 'Partially failed batch reported overall success'
+        Assert-Contains $Script:Messages '1 downloaded, 1 failed'
+        Assert-Contains $Script:Messages 'ftp://example.invalid/video'
+        Assert-Contains $Script:Messages 'Saved to'
+    }
 }
 finally {
     Remove-Item Env:LEGRABBER_TEST_MODE -ErrorAction SilentlyContinue
@@ -545,6 +726,12 @@ finally {
     $expectedPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
     if ($resolved.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolved) -like 'legrabber-tests-*') {
         Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+    foreach ($dir in $Script:TempDirs) {
+        $path = [IO.Path]::GetFullPath($dir)
+        if ($path.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $path) -like 'legrabber-*') {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 Write-Host "PowerShell $($PSVersionTable.PSVersion): $Script:Passed passed, $($Script:Failures.Count) failed."

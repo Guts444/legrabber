@@ -16,3 +16,10 @@ It makes no network requests, downloads no media, and needs no ffmpeg. Each run
 uses its own temporary directory and removes it afterward. Live site acceptance
 still needs separate testing because these checks cannot detect extractor changes
 or remote login restrictions.
+
+There are 64 checks per engine. Batch, archive and cookie handling are covered
+without touching the network: batch parsing runs against a fixture file, archive
+skips are proved against a written archive file, and command construction is
+inspected for the flags each option is supposed to produce. Checks that need a
+temporary file make their own directory rather than sharing the suite's, so the
+order of checks does not matter.

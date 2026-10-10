@@ -7,6 +7,9 @@
 /.verification/
 /VERIFICATION.md
 
+# -Archive bookkeeping is per machine, never shipped
+/.legrabber-archive.txt
+
 # Editor / OS files
 /.vscode/
 /.idea/

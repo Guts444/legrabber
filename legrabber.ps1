@@ -22,6 +22,8 @@
       legrabber <url> -Audio -AudioFormat mp3          # rip the audio
       legrabber <url> -List                            # show formats, no download
       legrabber <ig-url> -Browser chrome               # private reels need login
+      legrabber <url> -Cookies .\cookies.txt           # ...or a cookies file
+      legrabber -Batch links.txt -Archive              # whole list, skip repeats
       legrabber -Update                                # update yt-dlp
 #>
 [CmdletBinding()]
@@ -57,6 +59,11 @@ param(
     [ValidateSet('chrome', 'firefox', 'edge', 'brave', 'chromium', 'opera', 'vivaldi', 'whale', 'safari')]
     [string]$Browser,
 
+    # Read cookies from a Netscape-format cookies.txt instead of a live browser
+    # profile. Use this when the browser holds its cookie database open (Chrome
+    # does while it runs) or when the session lives on another machine.
+    [string]$Cookies,
+
     # YouTube only, last resort: force a player client (tv_simply, web_safari,
     # mweb, ...) when the default one keeps getting refused.
     [string]$Client,
@@ -67,6 +74,54 @@ param(
     # Embed / download subtitles.
     [Alias('Subtitles')]
     [switch]$Subs,
+
+    # Subtitle languages for -Subs, as a yt-dlp language selector
+    # ("en.*,en" by default, "all", "pt.*,en.*", ...).
+    [string]$SubLangs,
+
+    # Embed chapter markers into the video (needs ffmpeg).
+    [switch]$Chapters,
+
+    # Embed metadata into the video, not just into converted audio (needs ffmpeg).
+    [switch]$Tags,
+
+    # Embed the cover image into the video (needs ffmpeg).
+    [switch]$Thumb,
+
+    # Batch mode: read one link or search phrase per line from this file, or
+    # from stdin when the value is '-'. Blank lines and #comments are skipped.
+    [string]$Batch,
+
+    # Remember what has already been downloaded and skip it on later runs.
+    # Bare -Archive uses .legrabber-archive.txt beside the script.
+    [switch]$Archive,
+
+    # How many times yt-dlp retries a failing download (default 10).
+    [ValidateRange(1, 100)]
+    [int]$Retries = 10,
+
+    # Abort after this many consecutive retryable fragment failures (default 3).
+    [ValidateRange(0, 100)]
+    [int]$FragmentRetries = 3,
+
+    # Cap the download rate, for example "2M" or "500K". Empty means unlimited.
+    [string]$LimitRate,
+
+    # Seconds to wait before each download. Raise it when a site starts
+    # answering with bot checks or 429s.
+    [ValidateRange(0, 600)]
+    [int]$Sleep,
+
+    # Seconds to wait between playlist items (default: none).
+    [ValidateRange(0, 600)]
+    [int]$SleepRequests,
+
+    # Give up on a stalled connection after this many seconds (default 20).
+    [ValidateRange(5, 600)]
+    [int]$SocketTimeout = 20,
+
+    # Keep the source file's own modification time instead of the local one.
+    [switch]$KeepMtime,
 
     # Show the available formats and exit.
     [switch]$List,
@@ -91,8 +146,14 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = [Console]::OutputEncoding
 
+# Bare -Archive takes no value and lands beside the script. Set here rather
+# than in the param block so the function AST stays engine- and test-friendly.
+$PSDefaultParameterValues['*:Archive'] = $true
+
 $Script:Root        = $PSScriptRoot
 $Script:Bin         = Join-Path $Script:Root 'bin'
+# The archive path is built from the root, never from the test harness scope.
+$Script:ArchiveFile = Join-Path $Script:Root '.legrabber-archive.txt'
 $Script:YtDlp       = $null
 $Script:Ff          = $null
 $Script:DownloadOk  = $false
@@ -229,8 +290,12 @@ function Get-Ff {
     if ($Script:Ff) { return $Script:Ff }
 
     # Our own portable copy wins - it's the one that travels with the folder.
-    $local = Join-Path $Script:Bin 'ffmpeg\ffmpeg.exe'
-    if (Test-Path $local) { $Script:Ff = $local; return $local }
+    # Guarded: without a resolved bin folder there is nothing of ours to find,
+    # so fall straight through to the system copy.
+    if ($Script:Bin) {
+        $local = Join-Path $Script:Bin 'ffmpeg\ffmpeg.exe'
+        if (Test-Path $local) { $Script:Ff = $local; return $local }
+    }
 
     $cmd = Get-Command 'ffmpeg' -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) { $Script:Ff = $cmd.Source }
@@ -312,9 +377,30 @@ function Initialize-Ffmpeg {
 function Get-BaseArgs {
     $a = @('--ignore-config', '--no-warnings', '--newline', '--encoding', 'utf-8')
     if ($Browser) { $a += @('--cookies-from-browser', $Browser) }
+    if ($Cookies) { $a += @('--cookies', $Cookies) }
     if ($Client)  { $a += @('--extractor-args', "youtube:player_client=$Client") }
-    $ff = Get-Ff
-    if ($ff) { $a += @('--ffmpeg-location', (Split-Path -Parent $ff)) }
+    # Guarded: the ffmpeg probe needs a resolved bin folder, and a caller that
+    # has not set one (or a harness loading functions alone) must not break here.
+    if ($Script:Bin) {
+        $ff = Get-Ff
+        if ($ff) { $a += @('--ffmpeg-location', (Split-Path -Parent $ff)) }
+    }
+    $a += Get-NetworkArgs
+    return $a
+}
+
+# Everything that makes a download survive a flaky or hostile source. Kept in
+# one place so every download path and the format lister behave the same way.
+function Get-NetworkArgs {
+    $a = @()
+    if ($Retries)         { $a += @('--retries', [string]$Retries) }
+    if ($FragmentRetries) { $a += @('--fragment-retries', [string]$FragmentRetries) }
+    if ($SocketTimeout)   { $a += @('--socket-timeout', [string]$SocketTimeout) }
+    if ($LimitRate)       { $a += @('--limit-rate', $LimitRate) }
+    if ($Sleep)           { $a += @('--sleep-interval', [string]$Sleep) }
+    if ($SleepRequests)   { $a += @('--sleep-requests', [string]$SleepRequests) }
+    # The source's timestamp is rarely the useful one for media.
+    if (-not $KeepMtime)  { $a += '--no-mtime' }
     return $a
 }
 
@@ -667,6 +753,26 @@ function Get-AudioChoices {
         }
     }
     return $picked
+}
+
+# ------------------------------------------------------------ embed extras
+
+# Subtitle and metadata extras shared by every download path. ffmpeg is not
+# checked here: callers decide whether the extras are fatal or just skipped.
+function Get-EmbedArgs {
+    param([switch]$Video)
+
+    $a = @()
+    if ($Subs) {
+        $langs = 'en.*,en'
+        if ($SubLangs) { $langs = $SubLangs }
+        $a += @('--write-subs', '--embed-subs', '--sub-langs', $langs, '--convert-subs', 'srt')
+    }
+    if (-not $Video) { return $a }
+    if ($Tags)     { $a += '--embed-metadata' }
+    if ($Chapters) { $a += '--embed-chapters' }
+    if ($Thumb)    { $a += '--embed-thumbnail' }
+    return $a
 }
 
 # ---------------------------------------------------------------- the pickers
@@ -1264,6 +1370,47 @@ function Show-FormatList {
     return $true
 }
 
+# yt-dlp records archive entries as "<extractor> <id>". We only need the id, and
+# only the URL shapes that carry one unambiguously.
+function Get-ArchiveId {
+    param([string]$CleanUrl, [string]$Platform)
+
+    if ($Platform -eq 'youtube') {
+        $id = $null
+        if ($CleanUrl -match '[?&]v=([A-Za-z0-9_-]{11})') { $id = $Matches[1] }
+        elseif ($CleanUrl -match 'youtu\.be/([A-Za-z0-9_-]{11})') { $id = $Matches[1] }
+        if ($id) { return $id }
+        return $null
+    }
+    if ($Platform -eq 'x') {
+        if ($CleanUrl -match '/status(?:es)?/(\d+)') { return $Matches[1] }
+        return $null
+    }
+    if ($Platform -eq 'instagram') {
+        if ($CleanUrl -match '/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)') { return $Matches[1] }
+        return $null
+    }
+    return $null
+}
+
+# True when this item is already in the archive file. A playlist keeps its own
+# per-item bookkeeping, so only single items are decided here.
+function Test-Archived {
+    param([string]$CleanUrl, [string]$Platform)
+
+    if (-not $Script:ArchiveFile) { return $false }
+    if (-not (Test-Path -LiteralPath $Script:ArchiveFile -PathType Leaf)) { return $false }
+    $id = Get-ArchiveId -CleanUrl $CleanUrl -Platform $Platform
+    if (-not $id) { return $false }
+
+    foreach ($line in (Get-Content -LiteralPath $Script:ArchiveFile -Encoding UTF8)) {
+        $text = ([string]$line).Trim()
+        if (-not $text) { continue }
+        if ($text.Split(' ')[-1] -ceq $id) { return $true }
+    }
+    return $false
+}
+
 function Invoke-One {
     param([string]$Target)
 
@@ -1276,6 +1423,17 @@ function Invoke-One {
     $platform = Get-Platform $clean
     $isList   = ($platform -eq 'youtube') -and (Test-PlaylistUrl $clean)
 
+    # yt-dlp exits 0 and prints nothing at all for an archived item, which is
+    # indistinguishable from a genuine empty result further down. Settle it
+    # here, before any network work, so a re-run reports a skip and not a failure.
+    if ($Archive -and -not $isList -and (Test-Archived -CleanUrl $clean -Platform $platform)) {
+        SayHead "Downloading from $platform"
+        Say $clean DarkGray
+        Say 'Already grabbed - skipping.' DarkGray
+        $Script:DownloadOk = $true
+        return $true
+    }
+
     $base     = @(Get-BaseArgs)
 
     SayHead "Downloading from $platform"
@@ -1287,6 +1445,9 @@ function Invoke-One {
     if ($Audio -and $AudioFormat -ne 'original' -and -not $ff) {
         SayErr 'Audio conversion needs ffmpeg. Add it with: legrabber -Install'
         return $false
+    }
+    if ($Audio -and ($Chapters -or $Tags -or $Thumb)) {
+        SayWarn 'Chapters, tags and cover art are applied to video downloads; converted audio already carries tags and cover art.'
     }
     $outDir   = Get-OutputDir $platform
     $template = Get-Template -Platform $platform -Playlist:$isList
@@ -1361,6 +1522,7 @@ function Invoke-One {
 
         $dl = $base + @('-P', $outDir, '-o', $template, '--windows-filenames', '--trim-filenames', $filenameLimit, '--progress',
                         '--no-simulate', '--print', 'after_move:LEGRABBER_OUT:%(filepath)s')
+        if ($Archive) { $dl += @('--download-archive', $Script:ArchiveFile) }
         # Continue after a dead track while preserving the failure exit code.
         if ($isList) { $dl += @('--yes-playlist', '--no-abort-on-error') } else { $dl += '--no-playlist' }
 
@@ -1393,7 +1555,7 @@ function Invoke-One {
                 $dl += @('-f', "$($v.format_id)+ba[ext=$aext]/$($v.format_id)+ba/$($v.format_id)/bv*+ba/b")
                 }
             }
-            if ($Subs) { $dl += @('--write-subs', '--embed-subs', '--sub-langs', 'en.*,en', '--convert-subs', 'srt') }
+            $dl += @(Get-EmbedArgs -Video)
         }
         else {
             Show-AudioTable $auds
@@ -1419,6 +1581,7 @@ function Invoke-One {
     # --- everything else: pick a format string and go ----------------------
     $dl = $base + @('-P', $outDir, '-o', $template, '--windows-filenames', '--trim-filenames', $filenameLimit, '--progress',
                     '--no-simulate', '--print', 'after_move:LEGRABBER_OUT:%(filepath)s')
+    if ($Archive) { $dl += @('--download-archive', $Script:ArchiveFile) }
 
     if ($platform -eq 'youtube') {
         if ($isList) { $dl += @('--yes-playlist', '--no-abort-on-error') } else { $dl += '--no-playlist' }
@@ -1438,7 +1601,7 @@ function Invoke-One {
             }
         }
         $dl += @('-f', $selector)
-        if ($Subs) { $dl += @('--write-subs', '--embed-subs', '--sub-langs', 'en.*,en', '--convert-subs', 'srt') }
+        $dl += @(Get-EmbedArgs -Video)
     }
 
     $dl += $clean
@@ -1446,6 +1609,82 @@ function Invoke-One {
     Say ''
     Invoke-Download -ArgumentList $dl -Platform $platform
     return $Script:DownloadOk
+}
+
+function Read-BatchTargets {
+    param([string]$LiteralPath)
+
+    if ($LiteralPath -eq '-') {
+        $lines = @([Console]::In.ReadToEnd() -split "`r?`n")
+    }
+    else {
+        $lines = @(Get-Content -LiteralPath $LiteralPath -Encoding UTF8)
+    }
+
+    $targets = @()
+    foreach ($line in $lines) {
+        $text = ([string]$line).Trim()
+        # Blank lines and comments only; a URL is never '#'-prefixed.
+        if (-not $text) { continue }
+        if ($text.StartsWith('#')) { continue }
+        $targets += $text
+    }
+    return $targets
+}
+
+# One link or search phrase per line. Menus are off by design: -Yes keeps the
+# run unattended, and a batch containing search phrases needs -Pick.
+function Invoke-Batch {
+    param([string]$LiteralPath)
+
+    if ($List) { SayErr '-List shows formats for one address and cannot be combined with -Batch.'; return $false }
+    if ($Url)  { SayErr 'Pass either an address or -Batch, not both.'; return $false }
+
+    if ($LiteralPath -ne '-' -and -not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
+        SayErr "Could not read the batch file: $LiteralPath"
+        return $false
+    }
+
+    $targets = @(Read-BatchTargets -LiteralPath $LiteralPath)
+    if ($targets.Count -eq 0) {
+        SayWarn 'The batch file has no links. Put one address or search phrase on each line.'
+        return $false
+    }
+
+    if ($Search -and -not $Pick) {
+        SayErr 'Batch search needs -Pick 1-10, because nothing can prompt in a batch run.'
+        return $false
+    }
+
+    SayHead "Batch: $($targets.Count) item(s)"
+    if (-not $Yes) { Say 'Running unattended; menus are off for a batch run.' DarkGray }
+
+    $succeeded = 0
+    $failed    = 0
+    $index     = 0
+    $oldYes    = $Yes
+    $Yes       = $true
+    try {
+        foreach ($target in $targets) {
+            $index++
+            SayRule
+            Say "[$index/$($targets.Count)] $target" Cyan
+            $ok = $false
+            try { $ok = [bool](Invoke-Input -Target $target) }
+            catch { SayErr $_.Exception.Message }
+            # Same per-item summary the stay-open prompt gives, so a batch run
+            # does not hide which files landed where.
+            if ($ok) { Show-Result }
+            # Result state is per item; -Archive is the memory that spans runs.
+            if ($ok) { $succeeded++ } else { $failed++ }
+        }
+    }
+    finally { $Yes = $oldYes }
+
+    SayRule
+    if ($failed -gt 0) { SayErr "Batch finished: $succeeded downloaded, $failed failed." }
+    else               { SayGood "Batch finished: $succeeded downloaded, 0 failed." }
+    return ($failed -eq 0)
 }
 
 function Show-Result {
@@ -1470,8 +1709,20 @@ function Main {
     if ($Uninstall) { Invoke-Uninstall; return }
     if ($Update)    { Invoke-YtDlpUpdate; return }
 
+    # Fail on a bad cookie file before touching the network or fetching tools.
+    if ($Cookies -and -not (Test-Path -LiteralPath $Cookies -PathType Leaf)) {
+        SayErr "No cookies file at $Cookies. Export a Netscape-format cookies.txt first."
+        exit 1
+    }
+
     Get-YtDlp | Out-Null
     if (-not $List) { Initialize-Ffmpeg | Out-Null }
+
+    # Batch mode consumes one file (or stdin) and exits with the run's status.
+    if ($Batch) {
+        if (Invoke-Batch -LiteralPath $Batch) { return }
+        exit 1
+    }
 
     # A URL/search phrase on the command line means "do this one and exit".
     if ($Url) {

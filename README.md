@@ -17,7 +17,7 @@ It uses [ffmpeg](https://ffmpeg.org/) for merging, conversion and tagging.
 
 ## Install
 
-1. Download **`legrabber-v1.0.1.zip`** from the
+1. Download **`legrabber-v1.0.2.zip`** from the
    [latest release](https://github.com/Guts444/legrabber/releases/latest).
    The release ZIP contains everything needed to start; GitHub's automatic
    source archives are intended for development.
@@ -51,22 +51,22 @@ not legrabber itself.
 ## Quick examples
 
 ```powershell
-legrabber                                      # stay open for links and searches
-legrabber "your own video title"                # choose from up to 10 YouTube results
-legrabber "<VIDEO_URL>"                         # choose video quality or audio
-legrabber "<VIDEO_URL>" -Audio                  # original audio, no re-encoding
-legrabber "your own video title" -Audio -Yes -Pick 1
+legrabber                                                  # stay open for links and searches
+legrabber "https://www.youtube.com/watch?v=jNQXAC9IVRw"    # choose video quality or audio
+legrabber "https://www.youtube.com/watch?v=jNQXAC9IVRw" -Audio
+legrabber "https://x.com/user/status/2108405185542270976"  # best quality, no menu
+legrabber "your search phrase" -Audio -Yes -Pick 1         # first YouTube match, audio only
+legrabber -Batch links.txt -Archive                        # every link in the file, skipping repeats
 ```
 
-Examples use placeholders, not links to media. Replace `<VIDEO_URL>` and
-`<TRACK_URL>` with addresses for content you are permitted to download.
+Addresses only work when they point at something you are allowed to download.
 
 ## Use
 
 Type `legrabber` — it stays open and takes links or search phrases:
 
 ```
-  Paste a video address or search YouTube (q to quit): <VIDEO_URL>
+  Paste a video address or search YouTube (q to quit): https://x.com/user/status/2108405185542270976
   ...
   Paste a video address or search YouTube (q to quit): q
 ```
@@ -75,7 +75,7 @@ Or double-click `legrabber.cmd`, or pass the link straight in. Quote URLs,
 especially those containing `&`, so the shell passes the complete address:
 
 ```powershell
-legrabber "<VIDEO_URL>"
+legrabber "https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL123"
 ```
 
 ### Search YouTube
@@ -88,22 +88,22 @@ menu. `q` cancels the search and returns to the main prompt.
 You can also search from the command line:
 
 ```powershell
-legrabber "your own video title"
-legrabber "your own video title" -Audio
+legrabber "50 cent many men"
+legrabber "50 cent many men" -Audio
 ```
 
 Explicit links and bare domains still download directly. Use `-Search` to
-force search if your phrase looks like a domain, such as `my.video`:
+force search if your phrase looks like a domain, such as `Mr.Brightside`:
 
 ```powershell
-legrabber "my.video" -Search
+legrabber "Mr.Brightside" -Search
 ```
 
 `-Pick 2` selects result 2 without the results prompt. With `-Yes`, a search
 requires `-Pick` so it never silently downloads an unintended first match:
 
 ```powershell
-legrabber "your own video title" -Audio -Yes -Pick 1
+legrabber "50 cent many men" -Audio -Yes -Pick 1
 ```
 
 Search reads result metadata only; it downloads only the selected video.
@@ -115,7 +115,7 @@ options work as they do with a pasted link. No API key or extra dependency.
 Paste a full Spotify track link just like any other address:
 
 ```powershell
-legrabber "<TRACK_URL>"
+legrabber "https://open.spotify.com/track/0j2T0R9dR9qdJYsB7ciXhf"
 ```
 
 legrabber reads the public song title and artists, searches YouTube, and shows
@@ -123,9 +123,10 @@ up to ten matches. Choose the version you want, then use the normal video/audio
 menu. The file and its tags come from the chosen YouTube video, and it lands
 in `downloads\YouTube\` by default. Spotify audio is not downloaded.
 
-No Spotify account or API key is needed. Full track links, localized track
-links, embed track links and `spotify:track:<id>` desktop URIs work too. Albums,
-playlists and shortened share links are not supported; use a full track link.
+No Spotify account or API key is needed. Full track links, localized
+`open.spotify.com/intl-.../track/` links, embed track links and
+`spotify:track:<id>` desktop URIs work too. Albums, playlists and shortened
+share links are not supported; use a full track link.
 If Spotify cannot provide the metadata, search the song title and artist instead.
 
 Normal options carry through to the selected YouTube result. For example,
@@ -133,7 +134,7 @@ Normal options carry through to the selected YouTube result. For example,
 formats. Unattended use requires an explicit match index:
 
 ```powershell
-legrabber "<TRACK_URL>" -Audio -Yes -Pick 2
+legrabber "https://open.spotify.com/track/0j2T0R9dR9qdJYsB7ciXhf" -Audio -Yes -Pick 2
 ```
 
 ### YouTube asks what you want first
@@ -185,6 +186,93 @@ items. The launcher never pauses when given arguments.
 `-Yes` skips menus and optional ffmpeg setup; it selects the best available
 video unless you pass `-Audio` or `-Quality`. It still fetches yt-dlp if needed.
 
+### Batch runs
+
+Point `-Batch` at a text file with one link or search phrase per line. Blank
+lines and `#` comments are skipped, so the file can be annotated:
+
+```
+# music
+https://www.youtube.com/watch?v=jNQXAC9IVRw
+https://open.spotify.com/track/0j2T0R9dR9qdJYsB7ciXhf
+
+# video
+https://x.com/user/status/2108405185542270976
+```
+
+```powershell
+legrabber -Batch links.txt -Archive -Out D:\Media
+```
+
+Menus are off during a batch run, so it never stops to ask. A batch containing
+search phrases needs `-Pick 1-10`, because there is nothing to prompt with.
+`-Batch -` reads the list from stdin instead of a file:
+
+```powershell
+Get-Content links.txt | legrabber -Batch - -Audio
+```
+
+Every item is attempted even when one fails, the finished files are listed as
+they arrive, and the summary reports how many landed and how many did not. The
+run exits nonzero if any item failed.
+
+### Skipping what you already have
+
+`-Archive` records every finished download in `.legrabber-archive.txt` beside
+the script and skips anything already in it:
+
+```powershell
+legrabber -Batch links.txt -Archive
+```
+
+That is what makes re-running a batch or a channel cheap: the second run only
+touches what is new. Skipped items count as success and are reported as
+`Already grabbed`, so an archive-only run exits 0.
+
+### Cookies and sites that want a login
+
+`-Browser` uses your own browser session for content your account can reach.
+Chrome keeps its cookie database locked while it runs, which makes
+`-Browser chrome` fail on some systems; export cookies instead and use
+`-Cookies`:
+
+```powershell
+legrabber "https://www.instagram.com/reel/Cx1y2z3A/" -Browser chrome
+legrabber "https://www.instagram.com/reel/Cx1y2z3A/" -Cookies .\cookies.txt
+```
+
+A `cookies.txt` in Netscape format (the export format every cookie extension
+uses) also works when the session lives on another machine. Account access is
+not the same thing as permission to download.
+
+### Subtitles, chapters and metadata
+
+```powershell
+legrabber "https://www.youtube.com/watch?v=jNQXAC9IVRw" -Subs -SubLangs "pt.*,en.*"
+legrabber "https://www.youtube.com/watch?v=jNQXAC9IVRw" -Quality 1080 -Tags -Chapters -Thumb
+```
+
+`-Subs` downloads and embeds subtitles; `-SubLangs` takes a yt-dlp language
+selector (`en.*,en` is the default, `all` takes everything the source offers).
+`-Tags`, `-Chapters` and `-Thumb` embed metadata, chapter markers and cover art
+into the video and all need ffmpeg. Converted audio already carries tags and
+cover art, so these three apply to video downloads.
+
+### When a site fights back
+
+Retries, throttling and timeouts are exposed because the defaults are not
+always the polite thing to do:
+
+```powershell
+legrabber -Batch links.txt -Retries 25 -Sleep 5 -LimitRate 2M
+legrabber "https://www.youtube.com/watch?v=jNQXAC9IVRw" -SleepRequests 2 -SocketTimeout 45
+```
+
+`-Sleep` waits before each download and `-SleepRequests` between playlist
+items; both are the cure for bot checks and 429s. `-LimitRate "2M"` caps
+bandwidth so a big batch does not saturate the line. `-KeepMtime`
+keeps the source's own file timestamp instead of the default local one.
+
 ## Options
 
 | Option | What it does |
@@ -195,9 +283,23 @@ video unless you pass `-Audio` or `-Quality`. It still fetches yt-dlp if needed.
 | `-Audio` | Audio only; `-Quality` applies to video and is ignored here |
 | `-AudioFormat mp3` | `original` (default, no re-encode), `mp3`, `m4a`, `wav`, `flac`, `opus` |
 | `-Out <path>` | Save somewhere instead of `.\downloads` |
+| `-Batch <file>` | One link or search phrase per line; `-` reads stdin |
+| `-Archive` | Skip anything already downloaded; bare flag keeps its file beside the script |
 | `-Browser chrome` | Use your browser's cookies for posts your account can access |
+| `-Cookies <file>` | Use a Netscape-format cookies.txt instead of a live browser profile |
+| `-Subs` | Download and embed subtitles; requires ffmpeg |
+| `-SubLangs "pt.*,en.*"` | Subtitle language selector; default `en.*,en` |
+| `-Tags` | Embed metadata into the video; requires ffmpeg |
+| `-Chapters` | Embed chapter markers; requires ffmpeg |
+| `-Thumb` | Embed cover art into the video; requires ffmpeg |
+| `-Retries 25` | Retry a failing download this many times (default 10) |
+| `-FragmentRetries 5` | Retry a failing fragment this many times (default 3) |
+| `-LimitRate "2M"` | Cap the download rate; unset means unlimited |
+| `-Sleep 5` | Wait this many seconds before each download |
+| `-SleepRequests 2` | Wait this many seconds between playlist items |
+| `-SocketTimeout 45` | Give up on a stalled connection after this many seconds (default 20) |
+| `-KeepMtime` | Keep the source timestamp instead of the download time |
 | `-List` | Show available formats and exit, on any supported site |
-| `-Subs` | Download and embed English subtitles; requires ffmpeg |
 | `-Playlist` | YouTube: take the whole playlist from a `watch?v=…&list=…` link |
 | `-Yes` | Never prompt |
 | `-Client <name>` | YouTube only: force a player client |
@@ -211,18 +313,20 @@ video unless you pass `-Audio` or `-Quality`. It still fetches yt-dlp if needed.
 remaining items. Files already saved remain available, but the run exits with
 a nonzero code if any item fails. Errors can involve unavailable items, login
 requirements, network failures, or post-processing; check the printed message.
-Account access does not by itself grant permission to download an item.
 
-**A site asks for login.** `-Browser` uses your own browser session for content
-your account can access and you are permitted to download:
+**A site asks for login.** `-Browser` and `-Cookies` give yt-dlp your own
+session, which is what private and age-gated posts need:
 
 ```powershell
-legrabber "<VIDEO_URL>" -Browser chrome
+legrabber "https://x.com/user/status/2108405185542270976" -Browser firefox
 ```
 
-**The source denies access or restricts downloads.** Respect the restriction.
-Use the source's authorized download or export option where available.
-legrabber does not provide DRM decryption or grant access or download rights.
+If a browser source fails, export cookies to a file and use `-Cookies`.
+
+**The source denies access or restricts downloads.** legrabber drives yt-dlp
+extractors; if the source serves the media to yt-dlp, it downloads. If it does
+not — DRM streams, paid tiers, deleted items — the extractor fails and the
+error is printed. Sites that require new handling need a yt-dlp update.
 
 `-Update` is worth trying whenever a site starts failing; yt-dlp extractors
 change as sites change.
@@ -240,7 +344,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\regression.ps1
 ```
 
 PowerShell 7 is needed only for the second test command. The suite runs
-52 checks per engine without network requests, media downloads or ffmpeg.
+64 checks per engine without network requests, media downloads or ffmpeg.
 See [tests/README.md](https://github.com/Guts444/legrabber/blob/main/tests/README.md)
 for what it covers. GitHub Actions runs
 the same checks on Windows PowerShell 5.1 and PowerShell 7.
@@ -280,6 +384,7 @@ LICENSE          MIT license for legrabber
 pack.cmd         rebuild dist\legrabber.zip for sharing (developer checkout)
 bin\             yt-dlp.exe and ffmpeg\, fetched on first run
 downloads\       your videos
+.legrabber-archive.txt   created by -Archive; safe to delete to forget everything
 ```
 
 ## Note
@@ -288,17 +393,13 @@ Quality picks prefer H.264/MP4 for broad player and editor compatibility where
 those streams are available. Higher resolutions may fall back to VP9/AV1 in a
 `.webm` container.
 
-## Permitted use and license
-
-Use legrabber for content you own, content in the public domain, or content
-you have permission to download. Follow applicable law, the content's license
-and the source's terms. Access to a page or account does not establish
-download permission.
+## License
 
 legrabber is licensed under the [MIT License](https://github.com/Guts444/legrabber/blob/main/LICENSE).
-That license covers legrabber's code and documentation; it does not grant
-rights to downloaded content. yt-dlp, ffmpeg and other third-party components
-retain their own licenses.
+Download only what you have the right to download. That license covers
+legrabber's code and documentation; it does not grant rights to downloaded
+content. yt-dlp, ffmpeg and other third-party components retain their own
+licenses.
 
 Service and tool names identify compatibility and dependencies only.
 legrabber is an independent project with no affiliation or endorsement from

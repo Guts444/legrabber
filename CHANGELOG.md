@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.0.2 - 2026-10-10
+
+- Batch mode: `-Batch <file>` takes one link or search phrase per line, or
+  `-Batch -` from stdin. Menus are off, every item is attempted, results are
+  reported per item, and the run exits nonzero if any item failed.
+- `-Archive` remembers finished downloads in `.legrabber-archive.txt` beside
+  the script and skips them on later runs. Archived items are detected before
+  any network work, so a re-run reports `Already grabbed` and exits 0 rather
+  than looking like a download that produced nothing.
+- `-Cookies <file>` reads a Netscape-format cookies.txt, for browser profiles
+  that hold their cookie database open (Chrome while it runs) and for sessions
+  exported from another machine.
+- `-SubLangs` chooses subtitle languages instead of the fixed English set.
+- `-Tags`, `-Chapters` and `-Thumb` embed metadata, chapter markers and cover
+  art into video downloads.
+- Retry and throttling options: `-Retries`, `-FragmentRetries`, `-LimitRate`,
+  `-Sleep`, `-SleepRequests`, `-SocketTimeout` and `-KeepMtime`.
+- Downloads default to a local timestamp (`--no-mtime`); `-KeepMtime` restores
+  the source's own timestamp.
+- Documentation uses real, copy-pasteable examples again, and the permitted-use
+  section is down to the one line that matters.
+- 64 regression checks per engine, up from 52.
+
 ## v1.0.1 - 2026-10-10
 
 - License legrabber's code and documentation under MIT.
